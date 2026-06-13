@@ -1,0 +1,16 @@
+If:
+  PathMatch: .*\.h$
+CompileFlags:
+  Add:
+    - -xc
+    - -std=c23
+    - "-D__clangd__"
+
+---
+
+If:
+  PathMatch: .*\.c$
+CompileFlags:
+  Add: 
+    - -std=c23
+    - "-D__clangd__"
