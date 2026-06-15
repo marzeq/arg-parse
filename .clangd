@@ -4,7 +4,7 @@ CompileFlags:
   Add:
     - -xc
     - -std=c23
-    - "-D__clangd__"
+    - "-DARGS_IMPLEMENTATION"
 
 ---
 
@@ -13,4 +13,3 @@ If:
 CompileFlags:
   Add: 
     - -std=c23
-    - "-D__clangd__"

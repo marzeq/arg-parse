@@ -5,7 +5,8 @@
 Argument Parser
 ==============================================================================
 
-A small, self-contained command-line argument parser.
+A small, self-contained command-line argument parser packaged as a
+STB-style single-header library for C23 and later.
 
 Features:
   - Boolean flags
@@ -18,6 +19,11 @@ Features:
 ------------------------------------------------------------------------------
 Basic Usage
 ------------------------------------------------------------------------------
+
+0. Include the header.
+
+  #define ARGS_IMPLEMENTATION
+  #include "args.h"
 
 1. Create and configure an args instance.
 
@@ -61,6 +67,9 @@ Basic Usage
 
   args_reset(&a);
 
+There is a fixed limit of ARGS_MAX_ARGS arguments that can be registered.
+You can change it by defining ARGS_MAX_ARGS before including args.h.
+
 ------------------------------------------------------------------------------
 Argument Registration
 ------------------------------------------------------------------------------
@@ -89,7 +98,7 @@ will be true. Otherwise, it will be false and the value will be the default.
 Manually Accessing Arguments
 ------------------------------------------------------------------------------
 
-Arguments are stored in a dynamic array:
+Arguments are stored in a array:
 
     a.args
 
@@ -179,11 +188,7 @@ Example:
 #error "args.h requires C23 or later"
 #endif
 
-#include <stdio.h>
-#include <string.h>
-#include <errno.h>
-#include <limits.h>
-#include <stdlib.h>
+#include <stdbool.h>
 #include <stddef.h>
 
 typedef size_t usz;
@@ -211,15 +216,15 @@ typedef struct {
 #define arg_is_set(pvalue) (get_arg(pvalue)->is_set)
 #define arg_name(pvalue) (get_arg(pvalue)->name)
 
-const usz init_arg_cap = 4;
-const usz arg_cap_increment = 4;
+#ifndef ARGS_MAX_ARGS
+#define ARGS_MAX_ARGS 64
+#endif
 
 typedef struct {
   const char* positional_args_req;
 
-  arg* args;
+  arg args[ARGS_MAX_ARGS];
   usz args_count;
-  usz args_capacity;
 
   char** positional_args;
   usz positional_arg_count;
@@ -230,24 +235,67 @@ typedef struct {
   char** _copied_strings;
   usz _copied_strings_capacity;
   usz _copied_strings_count;
+
+  bool _parsed;
 } args;
 
-char* _args_copy_string(args* a, const char* str) {
+bool args_parse(args* a, int argc, char** argv);
+void args_reset(args* a);
+
+const char** _add_arg_string(
+  args* a,
+  const char* name,
+  const char* description,
+  const char* def
+);
+
+int* _add_arg_int(
+  args* a,
+  const char* name,
+  const char* description,
+  int def
+);
+
+bool* _add_arg_bool(
+  args* a,
+  const char* name,
+  const char* description,
+  bool def
+);
+
+#define add_arg(a, name, description, def) \
+  _Generic((def),                          \
+    char*: _add_arg_string,                \
+    const char*: _add_arg_string,          \
+    int: _add_arg_int,                     \
+    bool: _add_arg_bool                    \
+  )(a, name, description, def)
+
+#ifdef ARGS_IMPLEMENTATION
+
+#include <stdio.h>
+#include <string.h>
+#include <errno.h>
+#include <limits.h>
+#include <stdlib.h>
+#include <stddef.h>
+
+static char* _args_copy_string(args* a, const char* str) {
   size_t len = strlen(str);
   char* copy = malloc(len + 1);
   if (!copy) {
     return nil;
   }
   if (!a->_copied_strings) {
-    a->_copied_strings = malloc(init_arg_cap * sizeof(char*));
+    a->_copied_strings = malloc(8* sizeof(char*));
     if (!a->_copied_strings) {
       free(copy);
       return nil;
     }
-    a->_copied_strings_capacity = init_arg_cap;
+    a->_copied_strings_capacity = 8;
     a->_copied_strings_count = 0;
   } else if (a->_copied_strings_count >= a->_copied_strings_capacity) {
-    usz new_cap = a->_copied_strings_capacity + arg_cap_increment;
+    usz new_cap = a->_copied_strings_capacity*2;
     char** new_copied_strings = realloc(a->_copied_strings, new_cap * sizeof(char*));
     if (!new_copied_strings) {
       free(copy);
@@ -262,7 +310,17 @@ char* _args_copy_string(args* a, const char* str) {
   return copy;
 }
 
-void* _add_arg(args* ar, const char* name, const char* description, arg_type type) {
+static void* _add_arg(args* ar, const char* name, const char* description, arg_type type) {
+  if (ar->args_count >= ARGS_MAX_ARGS) {
+    fprintf(stderr, "Maximum number of arguments exceeded (%d). #define ARGS_MAX_ARGS before including args.h to increase this limit.\n", ARGS_MAX_ARGS);
+    return nil;
+  }
+
+  if (ar->_parsed) {
+    fprintf(stderr, "Cannot add arguments after parsing\n");
+    return nil;
+  }
+
   if (name == nil || description == nil) {
     return nil;
   }
@@ -270,23 +328,6 @@ void* _add_arg(args* ar, const char* name, const char* description, arg_type typ
   if (strcmp(name, "h") == 0) {
     fprintf(stderr, "'-h' is reserved for help\n");
     return nil;
-  }
-
-  if (!ar->args) {
-    ar->args = malloc(init_arg_cap * sizeof(arg));
-    if (!ar->args) {
-      return nil;
-    }
-    ar->args_capacity = init_arg_cap;
-    ar->args_count = 0;
-  } else if (ar->args_count >= ar->args_capacity) {
-    usz new_cap = ar->args_capacity + arg_cap_increment;
-    arg* new_args = realloc(ar->args, new_cap * sizeof(arg));
-    if (!new_args) {
-      return nil;
-    }
-    ar->args = new_args;
-    ar->args_capacity = new_cap;
   }
 
   for (usz i = 0; i < ar->args_count; i++) {
@@ -309,14 +350,6 @@ void* _add_arg(args* ar, const char* name, const char* description, arg_type typ
   ar->args_count += 1;
   return &ar->args[ar->args_count - 1].value;
 }
-
-#define add_arg(a, name, description, def) \
-  _Generic((def),                          \
-    char*: _add_arg_string,                \
-    const char*: _add_arg_string,          \
-    int: _add_arg_int,                     \
-    bool: _add_arg_bool                    \
-  )(a, name, description, def)
 
 const char** _add_arg_string(args* a, const char* name, const char* description, const char* def) {
   void* got = _add_arg(a, name, description, STRING);
@@ -354,12 +387,9 @@ void args_reset(args* a) {
   }
 
   free(a->_copied_strings);
-  free(a->args);
   free(a->positional_args);
 
-  a->args = nil;
   a->args_count = 0;
-  a->args_capacity = 0;
 
   a->positional_args = nil;
   a->positional_arg_count = 0;
@@ -370,28 +400,30 @@ void args_reset(args* a) {
   a->_copied_strings_capacity = 0;
 
   a->got_help = false;
+
+  a->_parsed = false;
 }
 
-bool is_flag(const char* arg) {
+static bool _is_flag(const char* arg) {
   return arg[0] == '-' && arg[1] != '\0';
 }
 
-bool str_startswith(const char* str, const char* prefix) {
+static bool _str_startswith(const char* str, const char* prefix) {
   size_t str_len = strlen(str);
   size_t prefix_len = strlen(prefix);
   return str_len >= prefix_len && strncmp(str, prefix, prefix_len) == 0;
 }
 
-bool add_positional_arg(args* a, const char* arg) {
+static bool _add_positional_arg(args* a, const char* arg) {
   if (!a->positional_args) {
-    a->positional_args = malloc(init_arg_cap * sizeof(char*));
+    a->positional_args = malloc(8* sizeof(char*));
     if (!a->positional_args) {
       return false;
     }
-    a->positional_arg_capacity = init_arg_cap;
+    a->positional_arg_capacity = 8;
     a->positional_arg_count = 0;
   } else if (a->positional_arg_count >= a->positional_arg_capacity) {
-    usz new_cap = a->positional_arg_capacity + arg_cap_increment;
+    usz new_cap = a->positional_arg_capacity*2;
 
     char** new_positional_args = realloc(a->positional_args, new_cap * sizeof(char*));
 
@@ -413,7 +445,7 @@ bool add_positional_arg(args* a, const char* arg) {
   return true;
 }
 
-static bool set_arg_value(args* a, arg* arg, const char* value_str) {
+static bool _set_arg_value(args* a, arg* arg, const char* value_str) {
   switch (arg->type) {
     case BOOL: {
       if (value_str != NULL) {
@@ -465,8 +497,8 @@ static bool set_arg_value(args* a, arg* arg, const char* value_str) {
 bool args_parse(args* a, int argc, char** argv) {
   for (int i = 1; i < argc; i++) {
     char* arg = argv[i];
-    if (!is_flag(arg)) {
-      if (!add_positional_arg(a, arg)) {
+    if (!_is_flag(arg)) {
+      if (!_add_positional_arg(a, arg)) {
         return false;
       }
       continue;
@@ -514,7 +546,20 @@ bool args_parse(args* a, int argc, char** argv) {
         }
 
         for (usz j = 0; j < a->args_count; j++) {
-          printf("  -%-*s  %s\n", (int)max_name_len, a->args[j].name, a->args[j].desc);
+          printf("  -%-*s  %s", (int)max_name_len, a->args[j].name, a->args[j].desc);
+          switch (a->args[j].type) {
+            case STRING:
+              if (a->args[j].value.string_value) {
+                printf(" (default: %s)", a->args[j].value.string_value);
+              }
+              break;
+            case NUMBER:
+              printf(" (default: %d)", a->args[j].value.number_value);
+              break;
+            default:
+              break;
+          }
+          printf("\n");
         }
       }
 
@@ -539,14 +584,14 @@ bool args_parse(args* a, int argc, char** argv) {
           value_str = argv[i];
           i += 1;
         }
-        if (!set_arg_value(a, &a->args[j], value_str)) {
+        if (!_set_arg_value(a, &a->args[j], value_str)) {
           return false;
         }
         break;
       }
 
       usz candidate_len = strlen(a->args[j].name); 
-      if (!str_startswith(arg, a->args[j].name)) {
+      if (!_str_startswith(arg, a->args[j].name)) {
         continue;
       }
 
@@ -562,7 +607,7 @@ bool args_parse(args* a, int argc, char** argv) {
 
       found = true;
       char* value_str = suffix + 1;
-      if (!set_arg_value(a, &a->args[j], value_str)) {
+      if (!_set_arg_value(a, &a->args[j], value_str)) {
         return false;
       }
       break;
@@ -632,6 +677,10 @@ bool args_parse(args* a, int argc, char** argv) {
     }
   }
 
+  a->_parsed = true;
   return true;
 }
+
+#endif // ARGS_IMPLEMENTATION
+
 #endif // ARGS_H

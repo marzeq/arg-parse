@@ -1,4 +1,7 @@
+#define ARGS_IMPLEMENTATION
 #include "args.h"
+
+#include <stdio.h>
 
 int main(int argc, char** argv) {
   args a = {};
