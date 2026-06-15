@@ -3,20 +3,20 @@
 int main(int argc, char** argv) {
   args a = {};
   a.positional_args_req = "?";
-  int* nproc = add_arg_default(&a, "nproc", "Number of processes", 4);
-  bool* verbose = add_arg(&a, "v", "Verbose", bool);
+  int* nproc = add_arg(&a, "nproc", "Number of processes", 4);
+  bool* verbose = add_arg(&a, "v", "Verbose", false);
 
   if (!args_parse(&a, argc, argv)) {
-    args_free(&a);
+    args_reset(&a);
     return 1;
   }
   if (a.got_help) {
-    args_free(&a);
+    args_reset(&a);
     return 0;
   }
 
   if (*verbose) {
-    for (usz i = 0; i < a.count; i++) {
+    for (usz i = 0; i < a.args_count; i++) {
       arg* argument = &a.args[i];
       printf("-%s ", argument->name);
       switch (argument->type) {
@@ -32,13 +32,18 @@ int main(int argc, char** argv) {
       }
     }
 
+    printf("# Positional Arguments:\n");
     for (usz i = 0; i < a.positional_arg_count; i++) {
       printf("%s\n", a.positional_args[i]);
     }
   }
 
   printf("Number of processes: %d\n", *nproc);
+  if (a.positional_arg_count > 0) {
+    printf("First positional argument: %s\n", a.positional_args[0]);
+  }
+  printf("Verbose argument is set: %s\n", arg_is_set(verbose) ? "true" : "false");
 
-  args_free(&a);
+  args_reset(&a);
   return 0;
 }
