@@ -1,9 +1,9 @@
 #ifndef ARGS_H
 #define ARGS_H
 /*
-==============================================================================
+====================================================================================
 Argument Parser
-==============================================================================
+====================================================================================
 
 A small, self-contained command-line argument parser packaged as a
 STB-style single-header library for C23 and later.
@@ -17,9 +17,9 @@ Features:
   - Positional argument validation
   - Automatic help generation (-h)
 
-------------------------------------------------------------------------------
+------------------------------------------------------------------------------------
 Basic Usage
-------------------------------------------------------------------------------
+------------------------------------------------------------------------------------
 
 0. Include the header.
 
@@ -76,9 +76,9 @@ Basic Usage
 There is a fixed limit of ARGS_MAX_ARGS arguments that can be registered.
 You can change it by defining ARGS_MAX_ARGS before including args.h.
 
-------------------------------------------------------------------------------
+------------------------------------------------------------------------------------
 Argument Registration
-------------------------------------------------------------------------------
+------------------------------------------------------------------------------------
 
 All arguments are registered with the _Generic add_arg() function, which
 infers the argument type and default value from the provided default.
@@ -93,9 +93,9 @@ add_arg signature:
     - (const) char*
     - (const) char** (null-terminated)
 
-------------------------------------------------------------------------------
+------------------------------------------------------------------------------------
 Argument Semantics
-------------------------------------------------------------------------------
+------------------------------------------------------------------------------------
 
 If an argument was provided explicitly in the command line, arg.is_set
 will be true. Otherwise, it will be false and the value will be the default.
@@ -104,9 +104,9 @@ If a char** argument is provided, the parser expects a null-terminated array
 of strings. Each occurrence of the argument appends a value to the array
 rather than replacing it.
 
-------------------------------------------------------------------------------
+------------------------------------------------------------------------------------
 Manually Accessing Arguments
-------------------------------------------------------------------------------
+------------------------------------------------------------------------------------
 
 Arguments are stored in an array:
 
@@ -116,9 +116,9 @@ And have an associated count:
 
     a.args_count
 
-------------------------------------------------------------------------------
+------------------------------------------------------------------------------------
 Positional Arguments
-------------------------------------------------------------------------------
+------------------------------------------------------------------------------------
 
 Positional arguments are stored in:
 
@@ -164,17 +164,17 @@ Positional args may preceed and follow flags, and be interspersed with them:
 
   prog file1 -v file2
 
-------------------------------------------------------------------------------
+------------------------------------------------------------------------------------
 Help
-------------------------------------------------------------------------------
+------------------------------------------------------------------------------------
 
 The parser automatically reserves -h and generates help text based on
 registered arguments. When -h is provided, the parser prints usage
 information and sets a.got_help to true.
 
-------------------------------------------------------------------------------
+------------------------------------------------------------------------------------
 Error Handling
-------------------------------------------------------------------------------
+------------------------------------------------------------------------------------
 
 Adding:
   add_arg() returns nullptr and prints an error message to stderr if any of the
@@ -208,17 +208,60 @@ In such cases, you are to immediately exit the program:
   args_reset(&a);
   return 1;
 
-------------------------------------------------------------------------------
+------------------------------------------------------------------------------------
 Ownership
-------------------------------------------------------------------------------
+------------------------------------------------------------------------------------
 
 The parser takes no ownership of any data you provide to it and is only
-responsible for managing memory allocated internally. All default values
+responsible for managing memory allocated internally. All values (name/desc/default)
 that are pointers (char*, char**) are copied internally. Ownership of the
 original data remains with the caller, so if you passed a heap backed pointer
 as a default value, you are responsible for freeing it after registering.
 
-==============================================================================
+------------------------------------------------------------------------------------
+Decisions Rationale
+------------------------------------------------------------------------------------
+
+# 1. Why a fixed amount of arguments?
+
+Very rarely does the number of arguments change at runtime, so we don't
+need reallocation capabilities, and we can set the maximum to exactly
+the number of arguments we have at compile time.
+
+Even if the number of arguments is runtime dependent, it even more rarely grows
+above a certain limit, so we can just set a high enough limit to
+cover all use cases without needing dynamic resizing.
+
+If the number of arguments is dynamic but we end up using
+less than the set limit, the amount of wasted space is negligible.
+Even if we waste space for 1000 arguments, which in itself is likely
+to never happen, the total memory usage is under a few hundred KB - so
+practically nothing for modern systems.
+
+# 2. Why not use a hash table insead of a dynamic array for argument storage?
+
+We intentionally return pointers to the argument values instead of providing
+an API that takes the argument name as a parameter for value retrieval.
+If we need to access the underlying argument struct for any reason,
+we can perform offset arithmetic on the pointer to the value to
+get the pointer to the argument struct. See the get_arg() macro.
+
+If a linear search is truly required the number of arguments is almost
+always so small that the performance benefit of a hash table over a
+linear search vs the cost of the implementation complexity is not worth it.
+
+# 3. Why copy all pointer values instead of just storing the provided pointers?
+
+Mainly for consistency's and convencience's sake:
+
+1. Appendable arguments require ownership of the array because of their semantics,
+   so to be consistent we copy all pointer values, even non-appendable ones
+   that don't strictly require it.
+2. From the library user's perspective, they can free those values right away
+   if they don't have any uses for them after registering and treat them as if
+   they don't exist anymore, even if under the hood they do.
+
+====================================================================================
 */
 
 #if !defined(__STDC_VERSION__) || __STDC_VERSION__ < 202311L
