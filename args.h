@@ -177,13 +177,13 @@ Error Handling
 ------------------------------------------------------------------------------------
 
 Adding:
-  add_arg() returns nullptr and prints an error message to stderr if any of the
+  add_arg() returns null and prints an error message to stderr if any of the
   following occur:
 
     - too many arguments are registered (exceeding ARGS_MAX_ARGS)
     - an argument is registered after parsing
-    - an argument name is nullptr or "h"
-    - a description is nullptr
+    - an argument name is null or "h"
+    - a description is null
     - duplicate argument names
     - memory allocation fails
 
@@ -222,44 +222,51 @@ as a default value, you are responsible for freeing it after registering.
 Decisions Rationale
 ------------------------------------------------------------------------------------
 
-# 1. Why a fixed amount of arguments?
+# 1. Why a fixed number of arguments?
 
-Very rarely does the number of arguments change at runtime, so we don't
-need reallocation capabilities, and we can set the maximum to exactly
-the number of arguments we have at compile time.
+Very rarely does the number of arguments change at runtime, so we do not
+need dynamic reallocation capabilities. Instead, we can set the maximum
+number of arguments at compile time.
 
-Even if the number of arguments is runtime dependent, it even more rarely grows
-above a certain limit, so we can just set a high enough limit to
-cover all use cases without needing dynamic resizing.
+Even when the number of arguments is determined at runtime, it is even
+rarer for it to grow beyond a reasonable upper bound. In such cases, we
+can simply set the limit high enough to cover all practical use cases
+without introducing the complexity of dynamic resizing.
 
-If the number of arguments is dynamic but we end up using
-less than the set limit, the amount of wasted space is negligible.
-Even if we waste space for 1000 arguments, which in itself is likely
-to never happen, the total memory usage is under a few hundred KB - so
-practically nothing for modern systems.
+If the number of arguments is dynamic but we end up using fewer than the
+configured limit, the amount of wasted memory is negligible. Even if we
+reserved space for 1000 arguments, which is itself highly unlikely, the
+total memory usage would still be only a few hundred kilobytes at most,
+so practically nothing on modern systems.
 
-# 2. Why not use a hash table insead of a dynamic array for argument storage?
+# 2. Why not use a hash table instead of a dynamic array for argument storage?
 
-We intentionally return pointers to the argument values instead of providing
-an API that takes the argument name as a parameter for value retrieval.
-If we need to access the underlying argument struct for any reason,
-we can perform offset arithmetic on the pointer to the value to
-get the pointer to the argument struct. See the get_arg() macro.
+We intentionally return pointers to argument values instead of providing
+an API that retrieves values by argument name. As a result, value access
+is constant time regardless of the underlying storage mechanism.
 
-If a linear search is truly required the number of arguments is almost
-always so small that the performance benefit of a hash table over a
-linear search vs the cost of the implementation complexity is not worth it.
+If access to the underlying argument structure is required, we can perform
+offset arithmetic on the value pointer to recover a pointer to the
+containing argument structure. See the `get_arg()` macro.
 
-# 3. Why copy all pointer values instead of just storing the provided pointers?
+When a linear search is required, the number of registered arguments is
+almost always small enough that the performance benefit of a hash table
+does not justify the additional implementation complexity.
 
-Mainly for consistency's and convencience's sake:
+# 3. Why copy all pointer values instead of storing the provided pointers directly?
 
-1. Appendable arguments require ownership of the array because of their semantics,
-   so to be consistent we copy all pointer values, even non-appendable ones
-   that don't strictly require it.
-2. From the library user's perspective, they can free those values right away
-   if they don't have any uses for them after registering and treat them as if
-   they don't exist anymore, even if under the hood they do.
+This is mainly done for consistency and convenience:
+
+1. Appendable arguments require ownership of the underlying array because
+   of their semantics. To keep ownership rules consistent across all
+   pointer-based argument types, we copy all pointer values, even for
+   non-appendable arguments that do not strictly require it.
+
+2. From the library user's perspective, ownership of the provided values
+   is never shared with the parser. Once an argument has been registered,
+   the user may immediately free or discard the original values if they
+   no longer need them, without affecting the parser's internal state.
+
 
 ====================================================================================
 */
