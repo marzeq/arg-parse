@@ -358,6 +358,14 @@ static void* _add_arg(args* ar, const char* name, const char* description, arg_t
     return nullptr;
   }
 
+  for (const char* p = name; *p != '\0'; p++) {
+    if (*p == '=') {
+      fprintf(stderr, "Argument name cannot contain '=': %s\n", name);
+      ar->failed_adding = true;
+      return nullptr;
+    }
+  }
+
   if (strcmp(name, "h") == 0) {
     fprintf(stderr, "'-h' is reserved for help\n");
     ar->failed_adding = true;
