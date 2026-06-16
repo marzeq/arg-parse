@@ -244,6 +244,8 @@ typedef struct {
 #define ARGS_MAX_ARGS 64
 #endif
 
+static_assert(ARGS_MAX_ARGS > 0, "ARGS_MAX_ARGS must be greater than 0");
+
 typedef struct {
   const char* positional_args_req;
 
