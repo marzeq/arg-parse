@@ -382,16 +382,6 @@ static void _xfree(void* ptr) {
   }
 }
 
-static char* _args_copy_string(const char* str) {
-  size_t len = strlen(str);
-  char* copy = malloc(len + 1);
-  if (!copy) {
-    return nullptr;
-  }
-  memcpy(copy, str, len + 1);
-  return copy;
-}
-
 static void* _add_arg(args* ar, const char* name, const char* description, arg_type type) {
   if (ar->args_count >= ARGS_MAX_ARGS) {
     fprintf(
@@ -438,14 +428,14 @@ static void* _add_arg(args* ar, const char* name, const char* description, arg_t
     }
   }
 
-  char* name_copy = _args_copy_string(name);
+  char* name_copy = strdup(name);
   if (!name_copy) {
     fprintf(stderr, "Memory allocation failed for argument name: %s\n", name);
     ar->failed_adding = true;
     return nullptr;
   }
 
-  char* desc_copy = _args_copy_string(description);
+  char* desc_copy = strdup(description);
   if (!desc_copy) {
     fprintf(stderr, "Memory allocation failed for argument description: %s\n", name);
     free(name_copy);
@@ -469,7 +459,7 @@ const char** _add_arg_string(args* a, const char* name, const char* description,
   if (!got) {
     return nullptr;
   }
-  a->args[a->args_count - 1].value.string_value = _args_copy_string(def);
+  a->args[a->args_count - 1].value.string_value = strdup(def);
   if (!a->args[a->args_count - 1].value.string_value) {
     fprintf(stderr, "Memory allocation failed for default value of argument '%s'\n", name);
     a->failed_adding = true;
@@ -534,7 +524,7 @@ const char*** _add_arg_stringv(args* a, const char* name, const char* descriptio
     return nullptr;
   }
   for (size_t i = 0; i < def_len; i++) {
-    copy[i] = _args_copy_string(def[i]);
+    copy[i] = strdup(def[i]);
     if (!copy[i]) {
       for (size_t j = 0; j < i; j++) {
         _xfree(copy[j]);
@@ -616,7 +606,7 @@ static bool _add_positional_arg(args* a, const char* arg) {
     a->_positional_arg_capacity = new_cap;
   }
 
-  a->positional_args[a->positional_arg_count] = _args_copy_string(arg);
+  a->positional_args[a->positional_arg_count] = strdup(arg);
 
   if (!a->positional_args[a->positional_arg_count]) {
     return false;
@@ -644,7 +634,7 @@ static bool _set_arg_value(args* a, arg* arg, const char* value_str) {
     }
     case STRING: {
       _xfree((char*)arg->value.string_value);
-      arg->value.string_value = _args_copy_string(value_str);
+      arg->value.string_value = strdup(value_str);
       if (arg->value.string_value == nullptr) {
         fprintf(stderr, "Memory allocation failed for argument '%s'\n", arg->name);
         return false;
@@ -686,7 +676,7 @@ static bool _set_arg_value(args* a, arg* arg, const char* value_str) {
         arg->_stringv_capacity = new_cap;
       }
 
-      char* copy = _args_copy_string(value_str);
+      char* copy = strdup(value_str);
       if (!copy) {
         fprintf(stderr, "Memory allocation failed for argument '%s'\n", arg->name);
         return false;
