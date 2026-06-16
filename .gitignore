@@ -1,2 +1,6 @@
-main
-example
+*
+!.gitignore
+!README.md
+!args.h
+!example.c
+!.clangd
