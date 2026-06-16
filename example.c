@@ -1,5 +1,5 @@
 #define ARGS_IMPLEMENTATION
-#define ARGS_MAX_ARGS 1
+#define ARGS_MAX_ARGS 3
 #include "args.h"
 
 #include <stdio.h>
@@ -9,7 +9,7 @@ int main(int argc, char** argv) {
   a.positional_args_req = "?";
   int* nproc = add_arg(&a, "nproc", "Number of processes", 4);
   bool* verbose = add_arg(&a, "v", "Verbose", false);
-  char* default_test[] = {"default1", "default2", nil};
+  char* default_test[] = {"default1", "default2", nullptr};
   const char*** test = add_arg(&a, "t", "Test string array", (const char**)default_test);
 
   if (a.failed_adding) {
@@ -27,7 +27,7 @@ int main(int argc, char** argv) {
   }
 
   if (*verbose) {
-    for (usz i = 0; i < a.args_count; i++) {
+    for (size_t i = 0; i < a.args_count; i++) {
       arg* argument = &a.args[i];
       printf("-%s ", argument->name);
       switch (argument->type) {
@@ -42,9 +42,9 @@ int main(int argc, char** argv) {
           break;
         case STRINGV: {
           printf("[");
-          for (usz j = 0; argument->value.stringv_value[j] != nil; j++) {
+          for (size_t j = 0; argument->value.stringv_value[j] != nullptr; j++) {
             printf("%s", argument->value.stringv_value[j]);
-            if (argument->value.stringv_value[j + 1] != nil) {
+            if (argument->value.stringv_value[j + 1] != nullptr) {
               printf(", ");
             }
           }
@@ -55,7 +55,7 @@ int main(int argc, char** argv) {
     }
 
     printf("# Positional Arguments:\n");
-    for (usz i = 0; i < a.positional_arg_count; i++) {
+    for (size_t i = 0; i < a.positional_arg_count; i++) {
       printf("%s\n", a.positional_args[i]);
     }
   }
@@ -65,7 +65,7 @@ int main(int argc, char** argv) {
     printf("First positional argument: %s\n", a.positional_args[0]);
   }
   printf("Verbose argument is set: %s\n", arg_is_set(verbose) ? "true" : "false");
-  for (usz i = 0; (*test)[i] != nil; i++) {
+  for (size_t i = 0; (*test)[i] != nullptr; i++) {
     printf("Test string array element %zu: %s\n", i, (*test)[i]);
   }
 

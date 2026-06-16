@@ -28,10 +28,10 @@ Basic Usage
 
 1. Create and configure an args instance.
 
-  args a = {};
+  args a = {0};
 
   // Positional argument requirements:
-  //   NULL = no positional arguments allowed
+  //   null = no positional arguments allowed
   //   "?"  = zero or one positional argument
   //   "+"  = one or more positional arguments
   //   "*"  = any number of positional arguments
@@ -43,7 +43,7 @@ Basic Usage
   bool* verbose = add_arg(&a, "v", "Enable verbose output", false);
   int* nproc = add_arg(&a, "nproc", "Number of processes", 4);
   const char** output = add_arg(&a, "output", "Output file", "out.txt");
-  char* default_sources[] = {"main.c", "util.c", nil};
+  char* default_sources[] = {"main.c", "util.c", nullptr};
   const char*** sources = add_arg(&a, "source", "Source files", (const char**)default_sources);
 
 3. Parse arguments.
@@ -65,7 +65,7 @@ Basic Usage
   printf("verbose: %s\n", *verbose ? "true" : "false");
   printf("nproc: %d\n", *nproc);
   printf("output: %s\n", *output);
-  for (usz i = 0; (*sources)[i] != nil; i++) {
+  for (size_t i = 0; (*sources)[i] != nullptr; i++) {
     printf("source[%zu]: %s\n", i, (*sources)[i]);
   }
 
@@ -122,43 +122,47 @@ Positional Arguments
 
 Positional arguments are stored in:
 
-    a.positional_args
+  a.positional_args
 
 And have an associated count:
 
-    a.positional_arg_count
+  a.positional_arg_count
 
 Example:
 
-    prog input.txt output.txt
+  prog input.txt output.txt
 
 Access:
 
-    for (usz i = 0; i < a.positional_arg_count; i++) {
-      printf("%s\n", a.positional_args[i]);
-    }
+  for (size_t i = 0; i < a.positional_arg_count; i++) {
+    printf("%s\n", a.positional_args[i]);
+  }
 
 Validation modes with a.positional_args_req:
 
-    NULL  no positional arguments allowed
-    "?"   zero or one
-    "+"   one or more
-    "*"   any number
-    "3"/"5"/...   exactly three/five/...
+  nullptr        no positional arguments allowed
+  "?"         zero or one
+  "+"         one or more
+  "*"         any number
+  "3"/"5"/... exactly three/five/...
 
 Example:
 
-    a.positional_args_req = "2";
+  a.positional_args_req = "2";
 
 Accepts:
 
-    prog file1 file2
+  prog file1 file2
 
 Rejects:
 
-    prog
-    prog file1
-    prog file1 file2 file3
+  prog
+  prog file1
+  prog file1 file2 file3
+
+Positional args may preceed and follow flags, and be interspersed with them:
+
+  prog file1 -v file2
 
 ------------------------------------------------------------------------------
 Help
@@ -173,13 +177,13 @@ Error Handling
 ------------------------------------------------------------------------------
 
 Adding:
-  add_arg() returns NULL and prints an error message to stderr if any of the
+  add_arg() returns nullptr and prints an error message to stderr if any of the
   following occur:
 
     - too many arguments are registered (exceeding ARGS_MAX_ARGS)
     - an argument is registered after parsing
-    - an argument name is NULL or "h"
-    - a description is NULL
+    - an argument name is nullptr or "h"
+    - a description is nullptr
     - duplicate argument names
     - memory allocation fails
 
@@ -217,15 +221,12 @@ as a default value, you are responsible for freeing it after registering.
 ==============================================================================
 */
 
-#if __STDC_VERSION__ < 202311L
+#if !defined(__STDC_VERSION__) || __STDC_VERSION__ < 202311L
 #error "args.h requires C23 or later"
 #endif
 
 #include <stdbool.h>
 #include <stddef.h>
-
-typedef size_t usz;
-#define nil NULL
 
 typedef enum arg_type {
   BOOL,
@@ -245,7 +246,7 @@ typedef struct {
     const char** stringv_value;
   } value;
   bool is_set;
-  usz _stringv_capacity;
+  size_t _stringv_capacity;
 } arg;
 
 #define get_arg(pvalue) ((arg*)((char*)(pvalue) - offsetof(arg, value)))
@@ -263,11 +264,11 @@ typedef struct {
   const char* positional_args_req;
 
   arg args[ARGS_MAX_ARGS];
-  usz args_count;
+  size_t args_count;
 
   char** positional_args;
-  usz positional_arg_count;
-  usz _positional_arg_capacity;
+  size_t positional_arg_count;
+  size_t _positional_arg_capacity;
 
   bool got_help;
 
@@ -329,7 +330,7 @@ static char* _args_copy_string(args* a, const char* str) {
   size_t len = strlen(str);
   char* copy = malloc(len + 1);
   if (!copy) {
-    return nil;
+    return nullptr;
   }
   memcpy(copy, str, len + 1);
   return copy;
@@ -344,30 +345,30 @@ static void* _add_arg(args* ar, const char* name, const char* description, arg_t
       ARGS_MAX_ARGS
     );
     ar->failed_adding = true;
-    return nil;
+    return nullptr;
   }
 
   if (ar->_parsed) {
     fprintf(stderr, "Cannot add arguments after parsing\n");
     ar->failed_adding = true;
-    return nil;
+    return nullptr;
   }
 
-  if (name == nil || description == nil) {
-    return nil;
+  if (name == nullptr || description == nullptr) {
+    return nullptr;
   }
 
   if (strcmp(name, "h") == 0) {
     fprintf(stderr, "'-h' is reserved for help\n");
     ar->failed_adding = true;
-    return nil;
+    return nullptr;
   }
 
-  for (usz i = 0; i < ar->args_count; i++) {
+  for (size_t i = 0; i < ar->args_count; i++) {
     if (strcmp(ar->args[i].name, name) == 0) {
       fprintf(stderr, "Duplicate argument name: %s\n", name);
       ar->failed_adding = true;
-      return nil;
+      return nullptr;
     }
   }
 
@@ -375,7 +376,7 @@ static void* _add_arg(args* ar, const char* name, const char* description, arg_t
   if (!ar->args[ar->args_count].name) {
     fprintf(stderr, "Memory allocation failed for argument name: %s\n", name);
     ar->failed_adding = true;
-    return nil;
+    return nullptr;
   }
   ar->args[ar->args_count].type = type;
   ar->args[ar->args_count].is_set = false;
@@ -383,7 +384,7 @@ static void* _add_arg(args* ar, const char* name, const char* description, arg_t
   if (!ar->args[ar->args_count].desc) {
     fprintf(stderr, "Memory allocation failed for argument description: %s\n", description);
     ar->failed_adding = true;
-    return nil;
+    return nullptr;
   }
   ar->args_count += 1;
   return &ar->args[ar->args_count - 1].value;
@@ -392,13 +393,13 @@ static void* _add_arg(args* ar, const char* name, const char* description, arg_t
 const char** _add_arg_string(args* a, const char* name, const char* description, const char* def) {
   void* got = _add_arg(a, name, description, STRING);
   if (!got) {
-    return nil;
+    return nullptr;
   }
   a->args[a->args_count - 1].value.string_value = _args_copy_string(a, def);
   if (!a->args[a->args_count - 1].value.string_value) {
     fprintf(stderr, "Memory allocation failed for default value of argument '%s'\n", name);
     a->failed_adding = true;
-    return nil;
+    return nullptr;
   }
   return (const char**)got;
 }
@@ -406,7 +407,7 @@ const char** _add_arg_string(args* a, const char* name, const char* description,
 int* _add_arg_int(args* a, const char* name, const char* description, int def) {
   void* got = _add_arg(a, name, description, NUMBER);
   if (!got) {
-    return nil;
+    return nullptr;
   }
   a->args[a->args_count - 1].value.number_value = def;
   return (int*)got;
@@ -415,15 +416,15 @@ int* _add_arg_int(args* a, const char* name, const char* description, int def) {
 bool* _add_arg_bool(args* a, const char* name, const char* description, bool def) {
   void* got = _add_arg(a, name, description, BOOL);
   if (!got) {
-    return nil;
+    return nullptr;
   }
   a->args[a->args_count - 1].value.bool_value = def;
   return (bool*)got;
 }
 
-static usz _null_term_array_len(const void** arr) {
-  usz len = 0;
-  while (arr[len] != nil) {
+static size_t _null_term_array_len(const void** arr) {
+  size_t len = 0;
+  while (arr[len] != nullptr) {
     len += 1;
   }
   return len;
@@ -432,17 +433,17 @@ static usz _null_term_array_len(const void** arr) {
 const char*** _add_arg_stringv(args* a, const char* name, const char* description, const char** def) {
   void* got = _add_arg(a, name, description, STRINGV);
   if (!got) {
-    return nil;
+    return nullptr;
   }
 
   // special case - we have to copy the array of strings and not just store the pointer,
   // because when parsing instead of replacing the pointer to the array we append
   // to it, and since the default might not be backed by a simple malloc, we
   // need full ownership of the array to be able to realloc it
-  usz def_len = _null_term_array_len((const void**)def);
+  size_t def_len = _null_term_array_len((const void**)def);
 
   // set capacity to the smallest power of 2 that can hold the default array
-  usz capacity = 1;
+  size_t capacity = 1;
   while (capacity < def_len + 1) {
     capacity = capacity << 1;
   }
@@ -451,12 +452,12 @@ const char*** _add_arg_stringv(args* a, const char* name, const char* descriptio
   if (!copy) {
     fprintf(stderr, "Memory allocation failed for default value array of argument '%s'\n", name);
     a->failed_adding = true;
-    return nil;
+    return nullptr;
   }
-  for (usz i = 0; i < def_len; i++) {
+  for (size_t i = 0; i < def_len; i++) {
     copy[i] = _args_copy_string(a, def[i]);
   }
-  copy[def_len] = nil; // null-terminate the array
+  copy[def_len] = nullptr; // null-terminate the array
   a->args[a->args_count - 1]._stringv_capacity = capacity;
   a->args[a->args_count - 1].value.stringv_value = (const char**)copy;
   return (const char***)got;
@@ -464,21 +465,21 @@ const char*** _add_arg_stringv(args* a, const char* name, const char* descriptio
 
 void args_reset(args* a) {
   // free allocated data that we commited ownership to
-  for (usz i = 0; i < a->args_count; i++) {
+  for (size_t i = 0; i < a->args_count; i++) {
     free((char*)a->args[i].name);
     free((char*)a->args[i].desc);
     if (a->args[i].type == STRING) {
       free((char*)a->args[i].value.string_value);
     } else if (a->args[i].type == STRINGV) {
       char** arr = (char**)a->args[i].value.stringv_value;
-      for (usz j = 0; arr[j] != nil; j++) {
+      for (size_t j = 0; arr[j] != nullptr; j++) {
         free(arr[j]);
       }
       free(arr);
     }
   }
 
-  for (usz i = 0; i < a->positional_arg_count; i++) {
+  for (size_t i = 0; i < a->positional_arg_count; i++) {
     free(a->positional_args[i]);
   }
 
@@ -487,7 +488,7 @@ void args_reset(args* a) {
   // reset state
   a->args_count = 0;
 
-  a->positional_args = nil;
+  a->positional_args = nullptr;
   a->positional_arg_count = 0;
   a->_positional_arg_capacity = 0;
 
@@ -515,7 +516,7 @@ static bool _add_positional_arg(args* a, const char* arg) {
     a->_positional_arg_capacity = 8;
     a->positional_arg_count = 0;
   } else if (a->positional_arg_count >= a->_positional_arg_capacity) {
-    usz new_cap = a->_positional_arg_capacity*2;
+    size_t new_cap = a->_positional_arg_capacity*2;
 
     char** new_positional_args = realloc(a->positional_args, new_cap * sizeof(char*));
 
@@ -545,7 +546,7 @@ static bool _set_arg_value(args* a, arg* arg, const char* value_str) {
 
   switch (arg->type) {
     case BOOL: {
-      if (value_str != NULL) {
+      if (value_str != nullptr) {
         fprintf(stderr, "Boolean argument '%s' does not take a value\n", arg->name);
         return false;
       }
@@ -555,7 +556,7 @@ static bool _set_arg_value(args* a, arg* arg, const char* value_str) {
     }
     case STRING: {
       arg->value.string_value = _args_copy_string(a, value_str);
-      if (arg->value.string_value == NULL) {
+      if (arg->value.string_value == nullptr) {
         fprintf(stderr, "Memory allocation failed for argument '%s'\n", arg->name);
         return false;
       }
@@ -582,10 +583,10 @@ static bool _set_arg_value(args* a, arg* arg, const char* value_str) {
     }
     case STRINGV: {
       char** arr = (char**)arg->value.stringv_value;
-      usz len = _null_term_array_len((const void**)arr);
+      size_t len = _null_term_array_len((const void**)arr);
 
       if (len + 1 >= arg->_stringv_capacity) {
-        usz new_cap = arg->_stringv_capacity * 2;
+        size_t new_cap = arg->_stringv_capacity * 2;
         char** new_arr = realloc(arr, new_cap * sizeof(char*));
         if (!new_arr) {
           fprintf(stderr, "Memory allocation failed for argument '%s'\n", arg->name);
@@ -602,7 +603,7 @@ static bool _set_arg_value(args* a, arg* arg, const char* value_str) {
         return false;
       }
       arr[len] = copy;
-      arr[len + 1] = nil; // maintain null-termination
+      arr[len + 1] = nullptr; // maintain null-termination
       break;
     }
     default: {
@@ -659,15 +660,15 @@ bool args_parse(args* a, int argc, char** argv) {
       if (a->args_count > 0) {
         printf("\nOptions:\n");
 
-        usz max_name_len = 0;
-        for (usz j = 0; j < a->args_count; j++) {
-          usz len = strlen(a->args[j].name);
+        size_t max_name_len = 0;
+        for (size_t j = 0; j < a->args_count; j++) {
+          size_t len = strlen(a->args[j].name);
           if (len > max_name_len) {
             max_name_len = len;
           }
         }
 
-        for (usz j = 0; j < a->args_count; j++) {
+        for (size_t j = 0; j < a->args_count; j++) {
           printf("  -%-*s  %s", (int)max_name_len, a->args[j].name, a->args[j].desc);
           switch (a->args[j].type) {
             case STRING:
@@ -679,11 +680,11 @@ bool args_parse(args* a, int argc, char** argv) {
               printf(" (default: %d)", a->args[j].value.number_value);
               break;
             case STRINGV: {
-              if (a->args[j].value.stringv_value[0] != nil) {
+              if (a->args[j].value.stringv_value[0] != nullptr) {
                 printf(" (appends to: [");
-                for (usz k = 0; a->args[j].value.stringv_value[k] != nil; k++) {
+                for (size_t k = 0; a->args[j].value.stringv_value[k] != nullptr; k++) {
                   printf("%s", a->args[j].value.stringv_value[k]);
-                  if (a->args[j].value.stringv_value[k + 1] != nil) {
+                  if (a->args[j].value.stringv_value[k + 1] != nullptr) {
                     printf(", ");
                   }
                 }
@@ -702,11 +703,11 @@ bool args_parse(args* a, int argc, char** argv) {
     }
 
     bool found = false;
-    for (usz j = 0; j < a->args_count; j++) {
+    for (size_t j = 0; j < a->args_count; j++) {
       // -flag value syntax
       if (strcmp(a->args[j].name, arg) == 0) {
         found = true;
-        char* value_str = nil;
+        char* value_str = nullptr;
         if (a->args[j].type != BOOL) {
           if (i + 1 >= argc) {
             fprintf(stderr, "Argument '%s' requires a value\n", arg);
@@ -721,7 +722,7 @@ bool args_parse(args* a, int argc, char** argv) {
         break;
       }
 
-      usz candidate_len = strlen(a->args[j].name); 
+      size_t candidate_len = strlen(a->args[j].name); 
       if (!_str_startswith(arg, a->args[j].name)) {
         continue;
       }
@@ -799,7 +800,7 @@ bool args_parse(args* a, int argc, char** argv) {
       return false;
     }
 
-    if (a->positional_arg_count != (usz)expected) {
+    if (a->positional_arg_count != (size_t)expected) {
       fprintf(stderr, "Expected %ld free arguments, got %zu\n", expected, a->positional_arg_count);
       return false;
     }
