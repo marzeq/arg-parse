@@ -411,6 +411,8 @@ static void* _add_arg(args* ar, const char* name, const char* description, arg_t
   }
 
   if (name == nullptr || description == nullptr) {
+    fprintf(stderr, "Argument name and/or description cannot be null\n");
+    ar->failed_adding = true;
     return nullptr;
   }
 
@@ -436,20 +438,25 @@ static void* _add_arg(args* ar, const char* name, const char* description, arg_t
     }
   }
 
-  ar->args[ar->args_count].name = _args_copy_string(ar, name);
-  if (!ar->args[ar->args_count].name) {
+  char* name_copy = _args_copy_string(ar, name);
+  if (!name_copy) {
     fprintf(stderr, "Memory allocation failed for argument name: %s\n", name);
     ar->failed_adding = true;
     return nullptr;
   }
-  ar->args[ar->args_count].type = type;
-  ar->args[ar->args_count].is_set = false;
-  ar->args[ar->args_count].desc = _args_copy_string(ar, description);
-  if (!ar->args[ar->args_count].desc) {
-    fprintf(stderr, "Memory allocation failed for argument description: %s\n", description);
+
+  char* desc_copy = _args_copy_string(ar, description);
+  if (!desc_copy) {
+    fprintf(stderr, "Memory allocation failed for argument description: %s\n", name);
+    free(name_copy);
     ar->failed_adding = true;
     return nullptr;
   }
+
+  ar->args[ar->args_count].name = name_copy;
+  ar->args[ar->args_count].desc = desc_copy;
+  ar->args[ar->args_count].type = type;
+  ar->args[ar->args_count].is_set = false;
   ar->args_count += 1;
   return &ar->args[ar->args_count - 1].value;
 }
@@ -529,6 +536,10 @@ const char*** _add_arg_stringv(args* a, const char* name, const char* descriptio
   for (size_t i = 0; i < def_len; i++) {
     copy[i] = _args_copy_string(a, def[i]);
     if (!copy[i]) {
+      for (size_t j = 0; j < i; j++) {
+        _xfree(copy[j]);
+      }
+      _xfree(copy);
       fprintf(stderr, "Memory allocation failed for default value of argument '%s'\n", name);
       a->failed_adding = true;
       return nullptr;
