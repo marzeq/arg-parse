@@ -140,7 +140,7 @@ Access:
 
 Validation modes with a.positional_args_req:
 
-  nullptr        no positional arguments allowed
+  null        no positional arguments allowed
   "?"         zero or one
   "+"         one or more
   "*"         any number
