@@ -9,9 +9,10 @@ A small, self-contained command-line argument parser packaged as a
 STB-style single-header library for C23 and later.
 
 Features:
-  - Boolean flags
-  - String arguments
-  - Integer arguments
+  - bool flags
+  - char* arguments
+  - int arguments
+  - char** (appendable)
   - Default values
   - Positional argument validation
   - Automatic help generation (-h)
@@ -42,6 +43,8 @@ Basic Usage
   bool* verbose = add_arg(&a, "v", "Enable verbose output", false);
   int* nproc = add_arg(&a, "nproc", "Number of processes", 4);
   const char** output = add_arg(&a, "output", "Output file", "out.txt");
+  char* default_sources[] = {"main.c", "util.c", nil};
+  const char*** sources = add_arg(&a, "source", "Source files", (const char**)default_sources);
 
 3. Parse arguments.
 
@@ -62,6 +65,9 @@ Basic Usage
   printf("verbose: %s\n", *verbose ? "true" : "false");
   printf("nproc: %d\n", *nproc);
   printf("output: %s\n", *output);
+  for (usz i = 0; (*sources)[i] != nil; i++) {
+    printf("source[%zu]: %s\n", i, (*sources)[i]);
+  }
 
 6. Reset parser state and free resources.
 
@@ -84,21 +90,25 @@ add_arg signature:
   where T may be:
     - bool
     - int
-    - const char*
-    - char*
+    - (const) char*
+    - (const) char** (null-terminated)
 
 ------------------------------------------------------------------------------
-Argument State
+Argument Semantics
 ------------------------------------------------------------------------------
 
 If an argument was provided explicitly in the command line, arg.is_set
 will be true. Otherwise, it will be false and the value will be the default.
 
+If a char** argument is provided, the parser expects a null-terminated array
+of strings. Each occurrence of the argument appends a value to the array
+rather than replacing it.
+
 ------------------------------------------------------------------------------
 Manually Accessing Arguments
 ------------------------------------------------------------------------------
 
-Arguments are stored in a array:
+Arguments are stored in an array:
 
     a.args
 
@@ -181,6 +191,16 @@ Example:
       return 1;
     }
 
+------------------------------------------------------------------------------
+Ownership
+------------------------------------------------------------------------------
+
+The parser takes no ownership of any data you provide to it and is only
+responsible for managing memory allocated internally. All default values
+that are pointers (char*, char**) are copied internally. Ownership of the
+original data remains with the caller, so if you passed a heap backed pointer
+as a default value, you are responsible for freeing it after registering.
+
 ==============================================================================
 */
 
@@ -198,6 +218,7 @@ typedef enum arg_type {
   BOOL,
   STRING,
   NUMBER,
+  STRINGV,
 } arg_type;
 
 typedef struct {
@@ -208,13 +229,16 @@ typedef struct {
     bool bool_value;
     const char* string_value;
     int number_value;
+    const char** stringv_value;
   } value;
   bool is_set;
+  usz _stringv_capacity;
 } arg;
 
 #define get_arg(pvalue) ((arg*)((char*)(pvalue) - offsetof(arg, value)))
 #define arg_is_set(pvalue) (get_arg(pvalue)->is_set)
 #define arg_name(pvalue) (get_arg(pvalue)->name)
+#define arg_desc(pvalue) (get_arg(pvalue)->desc)
 
 #ifndef ARGS_MAX_ARGS
 #define ARGS_MAX_ARGS 64
@@ -228,13 +252,9 @@ typedef struct {
 
   char** positional_args;
   usz positional_arg_count;
-  usz positional_arg_capacity;
+  usz _positional_arg_capacity;
 
   bool got_help;
-
-  char** _copied_strings;
-  usz _copied_strings_capacity;
-  usz _copied_strings_count;
 
   bool _parsed;
 } args;
@@ -263,12 +283,21 @@ bool* _add_arg_bool(
   bool def
 );
 
+const char*** _add_arg_stringv(
+  args* a,
+  const char* name,
+  const char* description,
+  const char** def
+);
+
 #define add_arg(a, name, description, def) \
   _Generic((def),                          \
     char*: _add_arg_string,                \
     const char*: _add_arg_string,          \
     int: _add_arg_int,                     \
-    bool: _add_arg_bool                    \
+    bool: _add_arg_bool,                   \
+    char**: _add_arg_stringv,              \
+    const char**: _add_arg_stringv         \
   )(a, name, description, def)
 
 #ifdef ARGS_IMPLEMENTATION
@@ -286,33 +315,18 @@ static char* _args_copy_string(args* a, const char* str) {
   if (!copy) {
     return nil;
   }
-  if (!a->_copied_strings) {
-    a->_copied_strings = malloc(8* sizeof(char*));
-    if (!a->_copied_strings) {
-      free(copy);
-      return nil;
-    }
-    a->_copied_strings_capacity = 8;
-    a->_copied_strings_count = 0;
-  } else if (a->_copied_strings_count >= a->_copied_strings_capacity) {
-    usz new_cap = a->_copied_strings_capacity*2;
-    char** new_copied_strings = realloc(a->_copied_strings, new_cap * sizeof(char*));
-    if (!new_copied_strings) {
-      free(copy);
-      return nil;
-    }
-    a->_copied_strings = new_copied_strings;
-    a->_copied_strings_capacity = new_cap;
-  }
   memcpy(copy, str, len + 1);
-  a->_copied_strings[a->_copied_strings_count] = copy;
-  a->_copied_strings_count += 1;
   return copy;
 }
 
 static void* _add_arg(args* ar, const char* name, const char* description, arg_type type) {
   if (ar->args_count >= ARGS_MAX_ARGS) {
-    fprintf(stderr, "Maximum number of arguments exceeded (%d). #define ARGS_MAX_ARGS before including args.h to increase this limit.\n", ARGS_MAX_ARGS);
+    fprintf(
+      stderr,
+      "Maximum number of arguments exceeded (%d). "
+      "#define ARGS_MAX_ARGS before including args.h to increase this limit.\n",
+      ARGS_MAX_ARGS
+    );
     return nil;
   }
 
@@ -381,23 +395,73 @@ bool* _add_arg_bool(args* a, const char* name, const char* description, bool def
   return (bool*)got;
 }
 
-void args_reset(args* a) {
-  for (usz i = 0; i < a->_copied_strings_count; i++) {
-    free((void*)a->_copied_strings[i]);
+static usz _null_term_array_len(const void** arr) {
+  usz len = 0;
+  while (arr[len] != nil) {
+    len += 1;
+  }
+  return len;
+}
+
+const char*** _add_arg_stringv(args* a, const char* name, const char* description, const char** def) {
+  void* got = _add_arg(a, name, description, STRINGV);
+  if (!got) {
+    return nil;
   }
 
-  free(a->_copied_strings);
+  // special case - we have to copy the array of strings and not just store the pointer,
+  // because when parsing instead of replacing the pointer to the array we append
+  // to it, and since the default might not be backed by a simple malloc, we
+  // need full ownership of the array to be able to realloc it
+  usz def_len = _null_term_array_len((const void**)def);
+
+  // set capacity to the smallest power of 2 that can hold the default array
+  usz capacity = 1;
+  while (capacity < def_len + 1) {
+    capacity = capacity << 1;
+  }
+
+  char** copy = malloc(capacity * sizeof(char*));
+  if (!copy) {
+    return nil;
+  }
+  for (usz i = 0; i < def_len; i++) {
+    copy[i] = _args_copy_string(a, def[i]);
+  }
+  copy[def_len] = nil; // null-terminate the array
+  a->args[a->args_count - 1]._stringv_capacity = capacity;
+  a->args[a->args_count - 1].value.stringv_value = (const char**)copy;
+  return (const char***)got;
+}
+
+void args_reset(args* a) {
+  // free allocated data that we commited ownership to
+  for (usz i = 0; i < a->args_count; i++) {
+    free((char*)a->args[i].name);
+    free((char*)a->args[i].desc);
+    if (a->args[i].type == STRING) {
+      free((char*)a->args[i].value.string_value);
+    } else if (a->args[i].type == STRINGV) {
+      char** arr = (char**)a->args[i].value.stringv_value;
+      for (usz j = 0; arr[j] != nil; j++) {
+        free(arr[j]);
+      }
+      free(arr);
+    }
+  }
+
+  for (usz i = 0; i < a->positional_arg_count; i++) {
+    free(a->positional_args[i]);
+  }
+
   free(a->positional_args);
 
+  // reset state
   a->args_count = 0;
 
   a->positional_args = nil;
   a->positional_arg_count = 0;
-  a->positional_arg_capacity = 0;
-
-  a->_copied_strings = nil;
-  a->_copied_strings_count = 0;
-  a->_copied_strings_capacity = 0;
+  a->_positional_arg_capacity = 0;
 
   a->got_help = false;
 
@@ -420,10 +484,10 @@ static bool _add_positional_arg(args* a, const char* arg) {
     if (!a->positional_args) {
       return false;
     }
-    a->positional_arg_capacity = 8;
+    a->_positional_arg_capacity = 8;
     a->positional_arg_count = 0;
-  } else if (a->positional_arg_count >= a->positional_arg_capacity) {
-    usz new_cap = a->positional_arg_capacity*2;
+  } else if (a->positional_arg_count >= a->_positional_arg_capacity) {
+    usz new_cap = a->_positional_arg_capacity*2;
 
     char** new_positional_args = realloc(a->positional_args, new_cap * sizeof(char*));
 
@@ -432,7 +496,7 @@ static bool _add_positional_arg(args* a, const char* arg) {
     }
 
     a->positional_args = new_positional_args;
-    a->positional_arg_capacity = new_cap;
+    a->_positional_arg_capacity = new_cap;
   }
 
   a->positional_args[a->positional_arg_count] = _args_copy_string(a, arg);
@@ -446,6 +510,11 @@ static bool _add_positional_arg(args* a, const char* arg) {
 }
 
 static bool _set_arg_value(args* a, arg* arg, const char* value_str) {
+  if (arg->is_set && arg->type != STRINGV) {
+    fprintf(stderr, "Argument '%s' specified multiple times\n", arg->name);
+    return false;
+  }
+
   switch (arg->type) {
     case BOOL: {
       if (value_str != NULL) {
@@ -481,6 +550,31 @@ static bool _set_arg_value(args* a, arg* arg, const char* value_str) {
       }
 
       arg->value.number_value = (int)value;
+      break;
+    }
+    case STRINGV: {
+      char** arr = (char**)arg->value.stringv_value;
+      usz len = _null_term_array_len((const void**)arr);
+
+      if (len + 1 >= arg->_stringv_capacity) {
+        usz new_cap = arg->_stringv_capacity * 2;
+        char** new_arr = realloc(arr, new_cap * sizeof(char*));
+        if (!new_arr) {
+          fprintf(stderr, "Memory allocation failed for argument '%s'\n", arg->name);
+          return false;
+        }
+        arr = new_arr;
+        arg->value.stringv_value = (const char**)new_arr;
+        arg->_stringv_capacity = new_cap;
+      }
+
+      char* copy = _args_copy_string(a, value_str);
+      if (!copy) {
+        fprintf(stderr, "Memory allocation failed for argument '%s'\n", arg->name);
+        return false;
+      }
+      arr[len] = copy;
+      arr[len + 1] = nil; // maintain null-termination
       break;
     }
     default: {
@@ -556,6 +650,18 @@ bool args_parse(args* a, int argc, char** argv) {
             case NUMBER:
               printf(" (default: %d)", a->args[j].value.number_value);
               break;
+            case STRINGV: {
+              if (a->args[j].value.stringv_value[0] != nil) {
+                printf(" (appends to: [");
+                for (usz k = 0; a->args[j].value.stringv_value[k] != nil; k++) {
+                  printf("%s", a->args[j].value.stringv_value[k]);
+                  if (a->args[j].value.stringv_value[k + 1] != nil) {
+                    printf(", ");
+                  }
+                }
+                printf("])");
+              }
+            }
             default:
               break;
           }
@@ -569,11 +675,8 @@ bool args_parse(args* a, int argc, char** argv) {
 
     bool found = false;
     for (usz j = 0; j < a->args_count; j++) {
+      // -flag value syntax
       if (strcmp(a->args[j].name, arg) == 0) {
-        if (a->args[j].is_set) {
-          fprintf(stderr, "Argument '%s' specified multiple times\n", arg);
-          return false;
-        }
         found = true;
         char* value_str = nil;
         if (a->args[j].type != BOOL) {
@@ -581,7 +684,7 @@ bool args_parse(args* a, int argc, char** argv) {
             fprintf(stderr, "Argument '%s' requires a value\n", arg);
             return false;
           }
-          value_str = argv[i];
+          value_str = argv[i + 1];
           i += 1;
         }
         if (!_set_arg_value(a, &a->args[j], value_str)) {
@@ -600,11 +703,8 @@ bool args_parse(args* a, int argc, char** argv) {
         continue;
       }
 
-      if (a->args[j].is_set) {
-        fprintf(stderr, "Argument '%s' specified multiple times\n", arg);
-        return false;
-      }
 
+      // -flag=value syntax
       found = true;
       char* value_str = suffix + 1;
       if (!_set_arg_value(a, &a->args[j], value_str)) {
