@@ -442,6 +442,9 @@ static void* _add_arg(args* ar, const char* name, const char* description, arg_t
 }
 
 const char** _add_arg_string(args* a, const char* name, const char* description, const char* def) {
+  if (def == nullptr) {
+    def = "";
+  }
   void* got = _add_arg(a, name, description, STRING);
   if (!got) {
     return nullptr;
@@ -482,6 +485,11 @@ static size_t _null_term_array_len(const void** arr) {
 }
 
 const char*** _add_arg_stringv(args* a, const char* name, const char* description, const char** def) {
+  if (def == nullptr) {
+    // treat null default as empty array
+    static const char* empty[] = {nullptr};
+    def = empty;
+  }
   void* got = _add_arg(a, name, description, STRINGV);
   if (!got) {
     return nullptr;
@@ -606,6 +614,9 @@ static bool _set_arg_value(args* a, arg* arg, const char* value_str) {
       break;
     }
     case STRING: {
+      if (arg->value.string_value) {
+        free((char*)arg->value.string_value);
+      }
       arg->value.string_value = _args_copy_string(a, value_str);
       if (arg->value.string_value == nullptr) {
         fprintf(stderr, "Memory allocation failed for argument '%s'\n", arg->name);
