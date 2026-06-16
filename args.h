@@ -376,6 +376,12 @@ const char*** _add_arg_stringv(
 #include <stdlib.h>
 #include <stddef.h>
 
+static void _xfree(void* ptr) {
+  if (ptr) {
+    free(ptr);
+  }
+}
+
 static char* _args_copy_string(args* a, const char* str) {
   size_t len = strlen(str);
   char* copy = malloc(len + 1);
@@ -522,6 +528,11 @@ const char*** _add_arg_stringv(args* a, const char* name, const char* descriptio
   }
   for (size_t i = 0; i < def_len; i++) {
     copy[i] = _args_copy_string(a, def[i]);
+    if (!copy[i]) {
+      fprintf(stderr, "Memory allocation failed for default value of argument '%s'\n", name);
+      a->failed_adding = true;
+      return nullptr;
+    }
   }
   copy[def_len] = nullptr; // null-terminate the array
   a->args[a->args_count - 1]._stringv_capacity = capacity;
@@ -532,24 +543,24 @@ const char*** _add_arg_stringv(args* a, const char* name, const char* descriptio
 void args_reset(args* a) {
   // free allocated data that we commited ownership to
   for (size_t i = 0; i < a->args_count; i++) {
-    free((char*)a->args[i].name);
-    free((char*)a->args[i].desc);
+    _xfree((char*)a->args[i].name);
+    _xfree((char*)a->args[i].desc);
     if (a->args[i].type == STRING) {
-      free((char*)a->args[i].value.string_value);
+      _xfree((char*)a->args[i].value.string_value);
     } else if (a->args[i].type == STRINGV) {
       char** arr = (char**)a->args[i].value.stringv_value;
       for (size_t j = 0; arr[j] != nullptr; j++) {
-        free(arr[j]);
+        _xfree(arr[j]);
       }
-      free(arr);
+      _xfree(arr);
     }
   }
 
   for (size_t i = 0; i < a->positional_arg_count; i++) {
-    free(a->positional_args[i]);
+    _xfree(a->positional_args[i]);
   }
 
-  free(a->positional_args);
+  _xfree(a->positional_args);
 
   // reset state
   a->args_count = 0;
@@ -621,9 +632,7 @@ static bool _set_arg_value(args* a, arg* arg, const char* value_str) {
       break;
     }
     case STRING: {
-      if (arg->value.string_value) {
-        free((char*)arg->value.string_value);
-      }
+      _xfree((char*)arg->value.string_value);
       arg->value.string_value = _args_copy_string(a, value_str);
       if (arg->value.string_value == nullptr) {
         fprintf(stderr, "Memory allocation failed for argument '%s'\n", arg->name);
@@ -833,21 +842,21 @@ bool args_parse(args* a, int argc, char** argv) {
   if (!a->positional_args_req) {
     // unspecified, assume 0
     if (a->positional_arg_count > 0) {
-      fprintf(stderr, "Expected no free arguments, got %zu\n", a->positional_arg_count);
+      fprintf(stderr, "Expected no positional arguments, got %zu\n", a->positional_arg_count);
       return false;
     }
   } else if (strcmp(a->positional_args_req, "+") == 0) {
     if (a->positional_arg_count == 0) {
-      fprintf(stderr, "Expected at least one free argument\n");
+      fprintf(stderr, "Expected at least one positional argument\n");
       return false;
     }
   } else if (strcmp(a->positional_args_req, "?") == 0) {
     if (a->positional_arg_count > 1) {
-      fprintf(stderr, "Expected at most one free argument\n");
+      fprintf(stderr, "Expected at most one positional argument\n");
       return false;
     }
   } else if (strcmp(a->positional_args_req, "*") == 0) {
-    // any number of free arguments is allowed
+    // any number of positional arguments is allowed
   } else {
     // expected to be a number
     char *end;
@@ -870,7 +879,7 @@ bool args_parse(args* a, int argc, char** argv) {
     }
 
     if (a->positional_arg_count != (size_t)expected) {
-      fprintf(stderr, "Expected %ld free arguments, got %zu\n", expected, a->positional_arg_count);
+      fprintf(stderr, "Expected %ld positional arguments, got %zu\n", expected, a->positional_arg_count);
       return false;
     }
   }
