@@ -1,4 +1,5 @@
 #define ARGS_IMPLEMENTATION
+#define ARGS_MAX_ARGS 1
 #include "args.h"
 
 #include <stdio.h>
@@ -10,6 +11,11 @@ int main(int argc, char** argv) {
   bool* verbose = add_arg(&a, "v", "Verbose", false);
   char* default_test[] = {"default1", "default2", nil};
   const char*** test = add_arg(&a, "t", "Test string array", (const char**)default_test);
+
+  if (a.failed_adding) {
+    args_reset(&a);
+    return 1;
+  }
 
   if (!args_parse(&a, argc, argv)) {
     args_reset(&a);

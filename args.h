@@ -172,24 +172,37 @@ information and sets a.got_help to true.
 Error Handling
 ------------------------------------------------------------------------------
 
-args_parse() returns false and prints an error message to
-stderr if any of the following occur:
+Adding:
+  add_arg() returns NULL and prints an error message to stderr if any of the
+  following occur:
 
-  - an unknown argument is encountered
-  - a required argument value is missing
-  - an integer is invalid
-  - an integer is out of range
-  - positional argument requirements are violated
-  - memory allocation fails
+    - too many arguments are registered (exceeding ARGS_MAX_ARGS)
+    - an argument is registered after parsing
+    - an argument name is NULL or "h"
+    - a description is NULL
+    - duplicate argument names
+    - memory allocation fails
 
-In such case, you are to immediately exit the program.
+  You may also check a.failed_adding after registering arguments
+  to see if any add_arg() call failed, so you don't have to
+  have error handling logic after every single add_arg() call.
 
-Example:
+Parsing:
 
-    if (!args_parse(&a, argc, argv)) {
-      args_reset(&a);
-      return 1;
-    }
+  args_parse() returns false and prints an error message to
+  stderr if any of the following occur:
+
+    - an unknown argument is encountered
+    - a required argument value is missing
+    - an integer is invalid
+    - an integer is out of range
+    - positional argument requirements are violated
+    - memory allocation fails
+
+In such cases, you are to immediately exit the program:
+
+  args_reset(&a);
+  return 1;
 
 ------------------------------------------------------------------------------
 Ownership
@@ -259,6 +272,7 @@ typedef struct {
   bool got_help;
 
   bool _parsed;
+  bool failed_adding;
 } args;
 
 bool args_parse(args* a, int argc, char** argv);
@@ -329,11 +343,13 @@ static void* _add_arg(args* ar, const char* name, const char* description, arg_t
       "#define ARGS_MAX_ARGS before including args.h to increase this limit.\n",
       ARGS_MAX_ARGS
     );
+    ar->failed_adding = true;
     return nil;
   }
 
   if (ar->_parsed) {
     fprintf(stderr, "Cannot add arguments after parsing\n");
+    ar->failed_adding = true;
     return nil;
   }
 
@@ -343,24 +359,30 @@ static void* _add_arg(args* ar, const char* name, const char* description, arg_t
 
   if (strcmp(name, "h") == 0) {
     fprintf(stderr, "'-h' is reserved for help\n");
+    ar->failed_adding = true;
     return nil;
   }
 
   for (usz i = 0; i < ar->args_count; i++) {
     if (strcmp(ar->args[i].name, name) == 0) {
       fprintf(stderr, "Duplicate argument name: %s\n", name);
+      ar->failed_adding = true;
       return nil;
     }
   }
 
   ar->args[ar->args_count].name = _args_copy_string(ar, name);
   if (!ar->args[ar->args_count].name) {
+    fprintf(stderr, "Memory allocation failed for argument name: %s\n", name);
+    ar->failed_adding = true;
     return nil;
   }
   ar->args[ar->args_count].type = type;
   ar->args[ar->args_count].is_set = false;
   ar->args[ar->args_count].desc = _args_copy_string(ar, description);
   if (!ar->args[ar->args_count].desc) {
+    fprintf(stderr, "Memory allocation failed for argument description: %s\n", description);
+    ar->failed_adding = true;
     return nil;
   }
   ar->args_count += 1;
@@ -374,6 +396,8 @@ const char** _add_arg_string(args* a, const char* name, const char* description,
   }
   a->args[a->args_count - 1].value.string_value = _args_copy_string(a, def);
   if (!a->args[a->args_count - 1].value.string_value) {
+    fprintf(stderr, "Memory allocation failed for default value of argument '%s'\n", name);
+    a->failed_adding = true;
     return nil;
   }
   return (const char**)got;
@@ -425,6 +449,8 @@ const char*** _add_arg_stringv(args* a, const char* name, const char* descriptio
 
   char** copy = malloc(capacity * sizeof(char*));
   if (!copy) {
+    fprintf(stderr, "Memory allocation failed for default value array of argument '%s'\n", name);
+    a->failed_adding = true;
     return nil;
   }
   for (usz i = 0; i < def_len; i++) {
