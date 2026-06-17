@@ -5,8 +5,9 @@
 Argument Parser
 ====================================================================================
 
-A small, self-contained command-line argument parser packaged as a
-STB-style single-header library for C23 and later.
+A small, self-contained command-line argument parser packaged as a STB-style
+single-header library for C23 and later. This library optimises for small size,
+API simplicity, and stable pointers rather than feature completeness.
 
 Features:
   - bool flags
@@ -15,7 +16,7 @@ Features:
   - char** (appendable)
   - Default values
   - Positional argument validation
-  - Automatic help generation (-h)
+  - Auto-generating help function included
 
 ------------------------------------------------------------------------------------
 Basic Usage
@@ -165,7 +166,7 @@ Rejects:
   prog file1
   prog file1 file2 file3
 
-Positional args may preceed and follow flags, and be interspersed with them:
+Positional args may precede and follow flags, and be interspersed with them:
 
   prog file1 -v file2
 
@@ -213,7 +214,8 @@ Parsing:
     - positional argument requirements are violated
     - memory allocation fails
 
-In such cases, you are to immediately exit the program:
+Parsing errors are generally unrecoverable for command-line applications,
+and most callers should terminate after a failure:
 
   args_reset(&a);
   return 1;
@@ -226,7 +228,7 @@ The parser takes no ownership of any data you provide to it and is only
 responsible for managing memory allocated internally. All values (name/desc/default)
 that are pointers (char*, char**) are copied internally. Ownership of the
 original data remains with the caller, so if you passed a heap backed pointer
-as a default value, you are responsible for freeing it after registering.
+as a default value, you are responsible for potentially freeing it after registering.
 
 ------------------------------------------------------------------------------------
 Decisions Rationale
@@ -234,7 +236,12 @@ Decisions Rationale
 
 # 1. Why a fixed number of arguments?
 
-Very rarely does the number of arguments change at runtime, so we do not
+The parser stores arguments in fixed storage so pointers returned from add_arg()
+remain valid for the lifetime of the parser. Dynamic resizing would require either
+pointer invalidation or an additional level of indirection, complicating both
+the implementation and API.
+
+Also, very rarely does the number of arguments change at runtime, so we do not
 need dynamic reallocation capabilities. Instead, we can set the maximum
 number of arguments at compile time.
 
@@ -246,20 +253,20 @@ without introducing the complexity of dynamic resizing.
 If the number of arguments is dynamic but we end up using fewer than the
 configured limit, the amount of wasted memory is negligible. Even if we
 reserved space for 1000 arguments, which is itself highly unlikely, the
-total memory usage would still be only a few hundred kilobytes at most,
-so practically nothing on modern systems.
+total memory usage would still be negligible in practice for modern systems.
 
 # 2. Why not use a hash table instead of a dynamic array for argument storage?
 
 We intentionally return pointers to argument values instead of providing
-an API that retrieves values by argument name. As a result, value access
-is constant time regardless of the underlying storage mechanism.
+an API that retrieves values by argument name. As a result, retrieving an
+argument's value is constant time regardless of the underlying storage mechanism.
 
-If access to the underlying argument structure is required, we can perform
-offset arithmetic on the value pointer to recover a pointer to the
-containing argument structure. See the `get_arg()` macro.
+If access to the underlying argument structure is required, we can recover
+a pointer to the containing argument structure from the value pointer.
+See the get_arg() macro alongside the dependent macros
+arg_is_set(), arg_name(), and arg_desc() for examples.
 
-When a linear search is required, the number of registered arguments is
+Even when a linear search is required, the number of registered arguments is
 almost always small enough that the performance benefit of a hash table
 does not justify the additional implementation complexity.
 
@@ -277,6 +284,25 @@ This is mainly done for consistency and convenience:
    the user may immediately free or discard the original values if they
    no longer need them, without affecting the parser's internal state.
 
+------------------------------------------------------------------------------------
+FAQ
+------------------------------------------------------------------------------------
+
+# Global state?
+
+No. All parser state is contained within the args instance. Multiple instances
+may be used simultaneously. The library contains no global mutable state.
+
+# Thread-safe?
+
+Separate args instances may be used concurrently from multiple threads.
+Individual args instances are not internally synchronised and must not be
+accessed concurrently without external synchronisation.
+
+# Unicode?
+
+No. The library treats argument names and values as opaque byte strings and
+performs no encoding validation.
 
 ====================================================================================
 */
