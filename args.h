@@ -5,14 +5,24 @@
 Argument Parser
 ====================================================================================
 
+------------------------------------------------------------------------------------
+License
+------------------------------------------------------------------------------------
+
+Published in the public domain.
+
+Do whatever you want with this code. No warranty provided.
+
+------------------------------------------------------------------------------------
+Description
+------------------------------------------------------------------------------------
+
 A small, self-contained command-line argument parser packaged as a STB-style
 single-header library for C23 and later. This library optimises for small size,
 API simplicity, and stable pointers rather than feature completeness.
 
 Features:
-  - bool flags
-  - char* arguments
-  - int arguments
+  - bool, char*, int flags
   - Default values
   - Positional argument validation
   - Auto-generating help function included
