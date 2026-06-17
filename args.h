@@ -53,7 +53,7 @@ Basic Usage
   bool* verbose = add_arg(&a, "v", "Enable verbose output", false);
   int* nproc = add_arg(&a, "nproc", "Number of processes", 4);
   const char** output = add_arg(&a, "output", "Output file", "out.txt");
-  // This also works:
+  // This also works - "" will be used as the default value:
   // const char** output = add_arg(&a, "output", "Output file", (const char*)nullptr);
 
 3. Parse arguments.
