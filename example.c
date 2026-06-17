@@ -1,5 +1,5 @@
 #define ARGS_IMPLEMENTATION
-#define ARGS_MAX_ARGS 3
+#define ARGS_MAX_ARGS 4
 #include "args.h"
 
 #include <stdio.h>
@@ -8,6 +8,7 @@ int main(int argc, char** argv) {
   args a = {};
   a.positional_args_req = "?";
   int* nproc = add_arg(&a, "nproc", "Number of processes", 4);
+  const char** output = add_arg(&a, "output", "Output file", (const char*)nullptr);
   bool* verbose = add_arg(&a, "v", "Verbose", false);
   char* default_test[] = {"default1", "default2", nullptr};
   const char*** test = add_arg(&a, "t", "Test string array", (const char**)default_test);
@@ -22,6 +23,7 @@ int main(int argc, char** argv) {
     return 1;
   }
   if (a.got_help) {
+    print_help(&a, argv[0]);
     args_reset(&a);
     return 0;
   }

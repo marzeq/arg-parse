@@ -43,8 +43,12 @@ Basic Usage
   bool* verbose = add_arg(&a, "v", "Enable verbose output", false);
   int* nproc = add_arg(&a, "nproc", "Number of processes", 4);
   const char** output = add_arg(&a, "output", "Output file", "out.txt");
+  // This also works:
+  // const char** output = add_arg(&a, "output", "Output file", (const char*)nullptr);
   char* default_sources[] = {"main.c", "util.c", nullptr};
   const char*** sources = add_arg(&a, "source", "Source files", (const char**)default_sources);
+  // This also works:
+  // const char*** sources = add_arg(&a, "source", "Source files", (const char**)nullptr);
 
 3. Parse arguments.
 
@@ -56,6 +60,7 @@ Basic Usage
 4. Handle help.
 
   if (a.got_help) {
+    print_help(&a, argv[0]);
     args_reset(&a);
     return 0;
   }
@@ -168,9 +173,14 @@ Positional args may preceed and follow flags, and be interspersed with them:
 Help
 ------------------------------------------------------------------------------------
 
-The parser automatically reserves -h and generates help text based on
-registered arguments. When -h is provided, the parser prints usage
-information and sets a.got_help to true.
+The parser automatically reserves the -h flag for help. If the user provides -h,
+args_parse() returns true immediately and sets a.got_help to true. You may then
+handle that case as you see fit. We also provide a convenience function:
+
+  void print_help(args* a, const char* prog_name);
+
+that prints a message based on the registered arguments and the positional argument
+requirements. Of course, you may also implement your own help message if you prefer.
 
 ------------------------------------------------------------------------------------
 Error Handling
@@ -310,7 +320,7 @@ typedef struct {
 
 static_assert(ARGS_MAX_ARGS > 0, "ARGS_MAX_ARGS must be greater than 0");
 
-typedef struct {
+typedef struct args {
   const char* positional_args_req;
 
   arg args[ARGS_MAX_ARGS];
@@ -367,6 +377,8 @@ const char*** _add_arg_stringv(
     const char**: _add_arg_stringv         \
   )(a, name, description, def)
 
+void print_help(args* a, const char* prog_name);
+
 #ifdef ARGS_IMPLEMENTATION
 
 #include <stdio.h>
@@ -375,6 +387,7 @@ const char*** _add_arg_stringv(
 #include <limits.h>
 #include <stdlib.h>
 #include <stddef.h>
+#include <assert.h>
 
 static void _xfree(void* ptr) {
   if (ptr) {
@@ -443,10 +456,11 @@ static void* _add_arg(args* ar, const char* name, const char* description, arg_t
     return nullptr;
   }
 
-  ar->args[ar->args_count].name = name_copy;
-  ar->args[ar->args_count].desc = desc_copy;
-  ar->args[ar->args_count].type = type;
-  ar->args[ar->args_count].is_set = false;
+  arg* arg = &ar->args[ar->args_count];
+  arg->name = name_copy;
+  arg->desc = desc_copy;
+  arg->type = type;
+  arg->is_set = false;
   ar->args_count += 1;
   return &ar->args[ar->args_count - 1].value;
 }
@@ -544,12 +558,13 @@ const char*** _add_arg_stringv(args* a, const char* name, const char* descriptio
 void args_reset(args* a) {
   // free allocated data that we commited ownership to
   for (size_t i = 0; i < a->args_count; i++) {
-    _xfree((char*)a->args[i].name);
-    _xfree((char*)a->args[i].desc);
-    if (a->args[i].type == STRING) {
-      _xfree((char*)a->args[i].value.string_value);
-    } else if (a->args[i].type == STRINGV) {
-      char** arr = (char**)a->args[i].value.stringv_value;
+    arg* arg = &a->args[i];
+    _xfree((char*)arg->name);
+    _xfree((char*)arg->desc);
+    if (arg->type == STRING) {
+      _xfree((char*)arg->value.string_value);
+    } else if (arg->type == STRINGV) {
+      char** arr = (char**)arg->value.stringv_value;
       for (size_t j = 0; arr[j] != nullptr; j++) {
         _xfree(arr[j]);
       }
@@ -696,100 +711,122 @@ static bool _set_arg_value(args* a, arg* arg, const char* value_str) {
   return true;
 }
 
+#define valid_strtol(str, out) \
+  (*(out) = strtol(str, &end, 10), end != str && *end == '\0' && errno != ERANGE)
+
+void print_help(args* a, const char* prog_name) {
+  printf("Usage: %s [options]", prog_name);
+  if (a->positional_args_req) {
+    if (strcmp(a->positional_args_req, "+") == 0) {
+      printf(" <arg1> [arg2] ...");
+    } else if (strcmp(a->positional_args_req, "?") == 0) {
+      printf(" [arg]");
+    } else if (strcmp(a->positional_args_req, "*") == 0) {
+      printf(" [arg1] [arg2] ...");
+    } else {
+      printf(" ");
+      char* end;
+      errno = 0;
+
+      long expected = strtol(a->positional_args_req, &end, 10);
+      assert(valid_strtol(a->positional_args_req, &expected) && expected >= 0);
+      for (long j = 0; j < expected; j++) {
+        printf("<arg%ld> ", j + 1);
+      }
+    }
+  }
+
+  printf("\n");
+
+  if (a->args_count > 0) {
+    printf("\nOptions:\n");
+
+    size_t max_name_len = 0;
+    for (size_t j = 0; j < a->args_count; j++) {
+      size_t len = strlen(a->args[j].name);
+      if (len > max_name_len) {
+        max_name_len = len;
+      }
+    }
+
+    for (size_t j = 0; j < a->args_count; j++) {
+      arg* arg = &a->args[j];
+      printf("  -%-*s  %s", (int)max_name_len, arg->name, arg->desc);
+      switch (arg->type) {
+        case STRING:
+          if (arg->value.string_value && arg->value.string_value[0] != '\0') {
+            printf(" (default: %s)", arg->value.string_value);
+          }
+          break;
+        case NUMBER:
+          printf(" (default: %d)", arg->value.number_value);
+          break;
+        case STRINGV: {
+          if (arg->value.stringv_value[0] != nullptr) {
+            printf(" (appends to: [");
+            for (size_t k = 0; arg->value.stringv_value[k] != nullptr; k++) {
+              printf("%s", arg->value.stringv_value[k]);
+              if (arg->value.stringv_value[k + 1] != nullptr) {
+                printf(", ");
+              }
+            }
+            printf("])");
+          } else {
+            printf(" (may be specified multiple times)");
+          }
+        }
+        default:
+          break;
+      }
+      printf("\n");
+    }
+  }
+}
+
 bool args_parse(args* a, int argc, char** argv) {
+  if (!a->positional_args_req) {
+  } else if (strcmp(a->positional_args_req, "+") == 0) {
+  } else if (strcmp(a->positional_args_req, "?") == 0) {
+  } else if (strcmp(a->positional_args_req, "*") == 0) {
+  } else {
+    char *end;
+    errno = 0;
+
+    long expected = strtol(a->positional_args_req, &end, 10);
+    if (!valid_strtol(a->positional_args_req, &expected) || expected < 0) {
+      fprintf(stderr, "Invalid positional_args_req value: %s\n", a->positional_args_req);
+      return false;
+    }
+  }
+
+  for (int i = 0; i < argc; i++) {
+    if (strcmp(argv[i], "-h") == 0) {
+      a->got_help = true;
+      return true;
+    }
+  }
+
   for (int i = 1; i < argc; i++) {
-    char* arg = argv[i];
-    if (!_is_flag(arg)) {
-      if (!_add_positional_arg(a, arg)) {
+    char* got = argv[i];
+    if (!_is_flag(got)) {
+      if (!_add_positional_arg(a, got)) {
         return false;
       }
       continue;
     }
 
-    arg += 1; // skip the leading '-'
+    got += 1; // skip the leading '-'
     
-    if (strcmp(arg, "h") == 0) {
-      printf("Usage: %s [options]", argv[0]);
-      if (a->positional_args_req) {
-        if (strcmp(a->positional_args_req, "+") == 0) {
-          printf(" <arg1> [arg2] ...");
-        } else if (strcmp(a->positional_args_req, "?") == 0) {
-          printf(" [arg]");
-        } else if (strcmp(a->positional_args_req, "*") == 0) {
-          printf(" [arg1] [arg2] ...");
-        } else {
-          printf(" ");
-          char* end;
-          errno = 0;
-
-          long expected = strtol(a->positional_args_req, &end, 10);
-          if (*end != '\0' || end == a->positional_args_req || errno == ERANGE || expected < 0) {
-            fprintf(stderr, "Invalid positional_args_req value: %s\n", a->positional_args_req);
-            return false;
-          }
-
-          for (long j = 0; j < expected; j++) {
-            printf("<arg%ld> ", j + 1);
-          }
-        }
-      }
-
-      printf("\n");
-
-      if (a->args_count > 0) {
-        printf("\nOptions:\n");
-
-        size_t max_name_len = 0;
-        for (size_t j = 0; j < a->args_count; j++) {
-          size_t len = strlen(a->args[j].name);
-          if (len > max_name_len) {
-            max_name_len = len;
-          }
-        }
-
-        for (size_t j = 0; j < a->args_count; j++) {
-          printf("  -%-*s  %s", (int)max_name_len, a->args[j].name, a->args[j].desc);
-          switch (a->args[j].type) {
-            case STRING:
-              if (a->args[j].value.string_value) {
-                printf(" (default: %s)", a->args[j].value.string_value);
-              }
-              break;
-            case NUMBER:
-              printf(" (default: %d)", a->args[j].value.number_value);
-              break;
-            case STRINGV: {
-              if (a->args[j].value.stringv_value[0] != nullptr) {
-                printf(" (appends to: [");
-                for (size_t k = 0; a->args[j].value.stringv_value[k] != nullptr; k++) {
-                  printf("%s", a->args[j].value.stringv_value[k]);
-                  if (a->args[j].value.stringv_value[k + 1] != nullptr) {
-                    printf(", ");
-                  }
-                }
-                printf("])");
-              }
-            }
-            default:
-              break;
-          }
-          printf("\n");
-        }
-      }
-
-      a->got_help = true;
-      return true;
-    }
-
     bool found = false;
     for (size_t j = 0; j < a->args_count; j++) {
+      arg* arg = &a->args[j];
       // -flag value syntax
-      if (strcmp(a->args[j].name, arg) == 0) {
+      if (strcmp(arg->name, got) == 0) {
         found = true;
         char* value_str = nullptr;
-        if (a->args[j].type != BOOL) {
+        if (arg->type != BOOL) {
           if (i + 1 >= argc) {
-            fprintf(stderr, "Argument '%s' requires a value\n", arg);
+            fprintf(stderr, "Argument '%s' requires a value\n", got);
             return false;
           }
           value_str = argv[i + 1];
@@ -801,12 +838,12 @@ bool args_parse(args* a, int argc, char** argv) {
         break;
       }
 
-      size_t candidate_len = strlen(a->args[j].name); 
-      if (!_str_startswith(arg, a->args[j].name)) {
+      size_t candidate_len = strlen(arg->name); 
+      if (!_str_startswith(got, arg->name)) {
         continue;
       }
 
-      char* suffix = arg + candidate_len;
+      char* suffix = got + candidate_len;
       if (*suffix == '\0' || *suffix != '=') {
         continue;
       }
@@ -822,19 +859,19 @@ bool args_parse(args* a, int argc, char** argv) {
     }
 
     if (!found) {
-      char* equal_sign = strchr(arg, '=');
+      char* equal_sign = strchr(got, '=');
       if (equal_sign) {
-        size_t len = equal_sign - arg;
+        size_t len = equal_sign - got;
         char* arg_name = malloc(len + 1);
         if (!arg_name) {
           return false;
         }
-        strncpy(arg_name, arg, len);
+        strncpy(arg_name, got, len);
         arg_name[len] = '\0';
         fprintf(stderr, "Unknown argument: %s\n", arg_name);
         free(arg_name);
       } else {
-        fprintf(stderr, "Unknown argument: %s\n", arg);
+        fprintf(stderr, "Unknown argument: %s\n", got);
       }
       return false;
     }
@@ -864,21 +901,7 @@ bool args_parse(args* a, int argc, char** argv) {
     errno = 0;
 
     long expected = strtol(a->positional_args_req, &end, 10);
-    if (end == a->positional_args_req) {
-      fprintf(stderr, "Invalid positional_args_req value: %s\n", a->positional_args_req);
-      return false;
-    }
-
-    if (*end != '\0') {
-      fprintf(stderr, "Invalid positional_args_req value: %s\n", a->positional_args_req);
-      return false;
-    }
-
-    if (errno == ERANGE || expected < 0) {
-      fprintf(stderr, "Invalid positional_args_req value: %s\n", a->positional_args_req);
-      return false;
-    }
-
+    assert(valid_strtol(a->positional_args_req, &expected) && expected >= 0);
     if (a->positional_arg_count != (size_t)expected) {
       fprintf(stderr, "Expected %ld positional arguments, got %zu\n", expected, a->positional_arg_count);
       return false;
