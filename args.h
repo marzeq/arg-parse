@@ -13,7 +13,6 @@ Features:
   - bool flags
   - char* arguments
   - int arguments
-  - char** (appendable)
   - Default values
   - Positional argument validation
   - Auto-generating help function included
@@ -46,10 +45,6 @@ Basic Usage
   const char** output = add_arg(&a, "output", "Output file", "out.txt");
   // This also works:
   // const char** output = add_arg(&a, "output", "Output file", (const char*)nullptr);
-  char* default_sources[] = {"main.c", "util.c", nullptr};
-  const char*** sources = add_arg(&a, "source", "Source files", (const char**)default_sources);
-  // This also works:
-  // const char*** sources = add_arg(&a, "source", "Source files", (const char**)nullptr);
 
 3. Parse arguments.
 
@@ -71,9 +66,6 @@ Basic Usage
   printf("verbose: %s\n", *verbose ? "true" : "false");
   printf("nproc: %d\n", *nproc);
   printf("output: %s\n", *output);
-  for (size_t i = 0; (*sources)[i] != nullptr; i++) {
-    printf("source[%zu]: %s\n", i, (*sources)[i]);
-  }
 
 6. Reset parser state and free resources.
 
@@ -97,7 +89,6 @@ add_arg signature:
     - bool
     - int
     - (const) char*
-    - (const) char** (null-terminated)
 
 ------------------------------------------------------------------------------------
 Argument Semantics
@@ -226,8 +217,8 @@ Ownership
 
 The parser takes no ownership of any data you provide to it and is only
 responsible for managing memory allocated internally. All values (name/desc/default)
-that are pointers (char*, char**) are copied internally. Ownership of the
-original data remains with the caller, so if you passed a heap backed pointer
+that are pointers are copied internally. Ownership of the original data
+remains with the caller, so if you passed a heap backed pointer
 as a default value, you are responsible for potentially freeing it after registering.
 
 ------------------------------------------------------------------------------------
@@ -318,7 +309,6 @@ typedef enum arg_type {
   BOOL,
   STRING,
   NUMBER,
-  STRINGV,
 } arg_type;
 
 typedef struct {
@@ -329,10 +319,8 @@ typedef struct {
     bool bool_value;
     const char* string_value;
     int number_value;
-    const char** stringv_value;
   } value;
   bool is_set;
-  size_t _stringv_capacity;
 } arg;
 
 #define get_arg(pvalue) ((arg*)((char*)(pvalue) - offsetof(arg, value)))
@@ -386,21 +374,12 @@ bool* _add_arg_bool(
   bool def
 );
 
-const char*** _add_arg_stringv(
-  args* a,
-  const char* name,
-  const char* description,
-  const char** def
-);
-
 #define add_arg(a, name, description, def) \
   _Generic((def),                          \
     char*: _add_arg_string,                \
     const char*: _add_arg_string,          \
     int: _add_arg_int,                     \
-    bool: _add_arg_bool,                   \
-    char**: _add_arg_stringv,              \
-    const char**: _add_arg_stringv         \
+    bool: _add_arg_bool                    \
   )(a, name, description, def)
 
 void print_help(args* a, const char* prog_name);
@@ -534,53 +513,6 @@ static size_t _null_term_array_len(const void** arr) {
   return len;
 }
 
-const char*** _add_arg_stringv(args* a, const char* name, const char* description, const char** def) {
-  if (def == nullptr) {
-    // treat null default as empty array
-    static const char* empty[] = {nullptr};
-    def = empty;
-  }
-  void* got = _add_arg(a, name, description, STRINGV);
-  if (!got) {
-    return nullptr;
-  }
-
-  // special case - we have to copy the array of strings and not just store the pointer,
-  // because when parsing instead of replacing the pointer to the array we append
-  // to it, and since the default might not be backed by a simple malloc, we
-  // need full ownership of the array to be able to realloc it
-  size_t def_len = _null_term_array_len((const void**)def);
-
-  // set capacity to the smallest power of 2 that can hold the default array
-  size_t capacity = 1;
-  while (capacity < def_len + 1) {
-    capacity = capacity << 1;
-  }
-
-  char** copy = malloc(capacity * sizeof(char*));
-  if (!copy) {
-    fprintf(stderr, "Memory allocation failed for default value array of argument '%s'\n", name);
-    a->failed_adding = true;
-    return nullptr;
-  }
-  for (size_t i = 0; i < def_len; i++) {
-    copy[i] = strdup(def[i]);
-    if (!copy[i]) {
-      for (size_t j = 0; j < i; j++) {
-        _xfree(copy[j]);
-      }
-      _xfree(copy);
-      fprintf(stderr, "Memory allocation failed for default value of argument '%s'\n", name);
-      a->failed_adding = true;
-      return nullptr;
-    }
-  }
-  copy[def_len] = nullptr; // null-terminate the array
-  a->args[a->args_count - 1]._stringv_capacity = capacity;
-  a->args[a->args_count - 1].value.stringv_value = (const char**)copy;
-  return (const char***)got;
-}
-
 void args_reset(args* a) {
   // free allocated data that we commited ownership to
   for (size_t i = 0; i < a->args_count; i++) {
@@ -589,12 +521,6 @@ void args_reset(args* a) {
     _xfree((char*)arg->desc);
     if (arg->type == STRING) {
       _xfree((char*)arg->value.string_value);
-    } else if (arg->type == STRINGV) {
-      char** arr = (char**)arg->value.stringv_value;
-      for (size_t j = 0; arr[j] != nullptr; j++) {
-        _xfree(arr[j]);
-      }
-      _xfree(arr);
     }
   }
 
@@ -658,7 +584,7 @@ static bool _add_positional_arg(args* a, const char* arg) {
 }
 
 static bool _set_arg_value(args* a, arg* arg, const char* value_str) {
-  if (arg->is_set && arg->type != STRINGV) {
+  if (arg->is_set) {
     fprintf(stderr, "Argument '%s' specified multiple times\n", arg->name);
     return false;
   }
@@ -699,31 +625,6 @@ static bool _set_arg_value(args* a, arg* arg, const char* value_str) {
       }
 
       arg->value.number_value = (int)value;
-      break;
-    }
-    case STRINGV: {
-      char** arr = (char**)arg->value.stringv_value;
-      size_t len = _null_term_array_len((const void**)arr);
-
-      if (len + 1 >= arg->_stringv_capacity) {
-        size_t new_cap = arg->_stringv_capacity * 2;
-        char** new_arr = realloc(arr, new_cap * sizeof(char*));
-        if (!new_arr) {
-          fprintf(stderr, "Memory allocation failed for argument '%s'\n", arg->name);
-          return false;
-        }
-        arr = new_arr;
-        arg->value.stringv_value = (const char**)new_arr;
-        arg->_stringv_capacity = new_cap;
-      }
-
-      char* copy = strdup(value_str);
-      if (!copy) {
-        fprintf(stderr, "Memory allocation failed for argument '%s'\n", arg->name);
-        return false;
-      }
-      arr[len] = copy;
-      arr[len + 1] = nullptr; // maintain null-termination
       break;
     }
     default: {
@@ -787,20 +688,6 @@ void print_help(args* a, const char* prog_name) {
         case NUMBER:
           printf(" (default: %d)", arg->value.number_value);
           break;
-        case STRINGV: {
-          if (arg->value.stringv_value[0] != nullptr) {
-            printf(" (appends to: [");
-            for (size_t k = 0; arg->value.stringv_value[k] != nullptr; k++) {
-              printf("%s", arg->value.stringv_value[k]);
-              if (arg->value.stringv_value[k + 1] != nullptr) {
-                printf(", ");
-              }
-            }
-            printf("])");
-          } else {
-            printf(" (may be specified multiple times)");
-          }
-        }
         default:
           break;
       }
